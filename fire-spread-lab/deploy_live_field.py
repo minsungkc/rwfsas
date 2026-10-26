@@ -208,6 +208,7 @@ def run_field(name, lat, lon, out_dir, k=1.0, pad_deg=None, inputs=None):
     step = {'fire': name, 'step': 0, 'base_wkb': base.wkb_hex,
             'start': t_map.isoformat(), 'end': now.isoformat(), 'dets': dets}
     grid = LF.build_prediction_grid(step, now, dem=LF.ZeroDem())
+    prediction_mode = 'persistence' if grid is None else 'learned_field_v3'
     if grid is None:
         print(f'{name}: no prediction grid -> persistence', flush=True); perim = base
     else:
@@ -226,13 +227,19 @@ def run_field(name, lat, lon, out_dir, k=1.0, pad_deg=None, inputs=None):
         print(f'{name}: +{len(drop_paths)} recent drop path(s) (worked edge)', flush=True)
 
     pred_ac = _acres(perim, lon, lat)
-    lo_ac, hi_ac = pred_ac*math.exp(CONF_LO), pred_ac*math.exp(CONF_HI)
-    print(f'{name}: FIELD pred {pred_ac:.0f} ac  [{lo_ac:.0f}, {hi_ac:.0f}]  (base {base_ac:.0f}, k={k})', flush=True)
+    if prediction_mode == 'persistence':
+        lo_ac, hi_ac = None, None
+        print(f'{name}: FIELD persistence {pred_ac:.0f} ac (base {base_ac:.0f}; no growth estimate)', flush=True)
+    else:
+        lo_ac, hi_ac = pred_ac*math.exp(CONF_LO), pred_ac*math.exp(CONF_HI)
+        print(f'{name}: FIELD pred {pred_ac:.0f} ac  [{lo_ac:.0f}, {hi_ac:.0f}]  (base {base_ac:.0f}, k={k})', flush=True)
 
     out = {'name': name, 'lat': lat, 'lon': lon, 't_map': t_map.isoformat(), 'now': now.isoformat(),
            'base_acres': round(base_ac), 'pred_acres': round(pred_ac),
-           'lo_acres': round(lo_ac), 'hi_acres': round(hi_ac),
-           'n_dets': len(dets), 'dets_by_sensor': by, 'k': k, 'n_drop_paths': len(drop_paths)}
+           'lo_acres': round(lo_ac) if lo_ac is not None else None,
+           'hi_acres': round(hi_ac) if hi_ac is not None else None,
+           'n_dets': len(dets), 'dets_by_sensor': by, 'k': k, 'n_drop_paths': len(drop_paths),
+           'prediction_mode': prediction_mode}
     with open(os.path.join(out_dir, f'{name}_field.json'), 'w') as fh:
         json.dump(out, fh, indent=2)
     with open(os.path.join(out_dir, f'{name}_field.geojson'), 'w') as fh:
@@ -309,11 +316,13 @@ def _render(name, lat, lon, base, perim, dets, lo_ac, hi_ac, pred_ac, out_dir, d
             ax.plot([xs[i], xs[i+1]], [ys[i], ys[i+1]], color=c, lw=2.6, zorder=6, solid_capstyle='round')
     ax.scatter([lon], [lat], marker='*', s=240, c='yellow', edgecolor='k', zorder=7)
     ax.set_xlim(*vx); ax.set_ylim(*vy); ax.set_xlabel('lon'); ax.set_ylabel('lat')
+    area_label = (f'FIELD {pred_ac:.0f} ac  [{lo_ac:.0f}, {hi_ac:.0f}]' if lo_ac is not None
+                  else f'FIELD persistence {pred_ac:.0f} ac (no growth estimate)')
     handles = ax.get_legend_handles_labels()[0] + [
         Patch(facecolor='none', edgecolor='#ff2a2a', label='ACTIVE edge (recent/hot)'),
         Patch(facecolor='none', edgecolor='#00ff66', label='quiet edge'),
         Patch(facecolor='none', edgecolor='cyan', label='mapped base (as-of)'),
-        Patch(facecolor='none', edgecolor='none', label=f'FIELD {pred_ac:.0f} ac  [{lo_ac:.0f}, {hi_ac:.0f}]')]
+        Patch(facecolor='none', edgecolor='none', label=area_label)]
     ax.legend(handles=handles, loc='upper right', fontsize=8, framealpha=0.85)
     ax.set_title(f'{name} — learned-field v3 (GOES+VIIRS), {datetime.now(timezone.utc):%Y-%m-%d %H:%MZ}')
     fig.tight_layout(); fig.savefig(os.path.join(out_dir, f'{name}_field.png'), dpi=115); plt.close(fig)

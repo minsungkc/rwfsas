@@ -66,6 +66,10 @@ def cmd_fires(a):
         sys.exit('no fires returned (offline, or WFIGS is unreachable)')
     if not a.all:
         fires = [f for f in fires if _is_active(f['pct_contained'], f['ended'])][:a.n]
+    if not fires:
+        print(f'No active fires found with at least {a.min_acres:,} mapped acres.')
+        print('Try a lower --min-acres value or add --all to include contained fires.')
+        return
     print(f'{"name":<28}{"state":<8}{"acres":>10}{"contained":>11}   lat, lon')
     for f in fires:
         pc = '?' if f['pct_contained'] is None else f'{f["pct_contained"]:.0f}%'
@@ -96,9 +100,16 @@ def cmd_run(a):
     if not res:
         sys.exit('no result (no mapped perimeter near that point)')
     base, pred = res['base_acres'], res['pred_acres']
+    if res.get('prediction_mode') == 'persistence':
+        print('  prediction mode          : persistence (no prediction grid; held at mapped perimeter)')
+    else:
+        print('  prediction mode          : learned_field_v3')
     print(f'\n  first perimeter (mapped) : {base:>9,} ac   as-of {res["t_map"][:16]}Z')
-    print(f'  predicted now            : {pred:>9,} ac   80% range {res["lo_acres"]:,} - {res["hi_acres"]:,}')
-    if base:
+    if res['lo_acres'] is None or res['hi_acres'] is None:
+        print(f'  perimeter held at        : {pred:>9,} ac   no growth estimate or prediction range')
+    else:
+        print(f'  predicted now            : {pred:>9,} ac   80% range {res["lo_acres"]:,} - {res["hi_acres"]:,}')
+    if base and res.get('prediction_mode') != 'persistence':
         print(f'  growth                   : {pred / base:>9.2f}x   (+{pred - base:,} ac)')
     print(f'  detections               : {res["n_dets"]}  {res["dets_by_sensor"]}')
     png = os.path.join(out_dir, f'{name}_field.png')
@@ -156,6 +167,8 @@ def main():
     p.add_argument('--out', default=os.path.join(ROOT, 'output')); p.add_argument('--open', action='store_true')
     p.set_defaults(fn=cmd_stage)
     a = ap.parse_args()
+    if a.cmd == 'run' and ((a.lat is None) != (a.lon is None)):
+        ap.error('run requires both --lat and --lon when coordinates are supplied')
     a.fn(a)
 
 
